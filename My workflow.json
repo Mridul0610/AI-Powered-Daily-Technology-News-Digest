@@ -1,0 +1,234 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 23
+            }
+          ]
+        }
+      },
+      "id": "89058c61-1035-4737-931f-75cfc3027a09",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.theverge.com/rss/index.xml",
+        "options": {}
+      },
+      "id": "36b386ea-a8a0-4cf1-8f3e-c0f7f22a0442",
+      "name": "RSS Read",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 2
+      },
+      "id": "c39d86ca-73c9-4e43-9b95-5cb7b507505a",
+      "name": "Limit to 2 Latest",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        464,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://r.jina.ai/' + $json.link }}",
+        "options": {}
+      },
+      "id": "e8253c15-2ed1-4231-a34a-b8ba790c2313",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        688,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Article text:\n{{ $json.data }}",
+        "options": {
+          "systemMessage": "You are a professional technology news analyst.\n\nAnalyze the article text supplied to you and create a detailed briefing.\n\nInclude:\n1. Headline\n2. What happened, explained in detail\n3. Key facts, companies, people, and technologies involved\n4. Why this news matters\n5. Impact on users and businesses\n6. Potential risks or future developments mentioned in the article\n7. A final takeaway in 5 bullet points only\n\nUse simple English.\nDo not invent facts or statistics.\nIf the article text is incomplete, clearly state that limitation.\n\nFormatting rules (this is sent as a chat message):\n- Write each section heading on its own line, starting with ## (for example: ## What happened). Do not number the headings.\n- Under headings use short paragraphs, and use a hyphen and a space (- ) for bullet points.\n- Do not use any other markdown or symbols: no bold markers, no asterisks, no tables, no code blocks.\n- Always finish the whole briefing, including all 5 final takeaway bullets.\n- HARD LIMIT: the whole briefing must be under 1500 characters in total, counting everything. Two briefings are combined into one Telegram message, so going over breaks delivery.\n- Keep every section to 1-2 short sentences, and each of the 5 takeaway bullets to one short line. Be concise rather than long."
+        }
+      },
+      "id": "04737108-c45c-4867-90a2-db672f6d4b26",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        928,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.5-flash",
+        "options": {}
+      },
+      "id": "befc41ad-b94b-4dcc-bcab-aa62212dc22b",
+      "name": "Google Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        784,
+        208
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "ZlHirjzsEZ3ehG1u",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const NL = String.fromCharCode(10);\nconst BT = String.fromCharCode(96);\nconst esc = (s) => s.split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;');\n\nfunction emojiFor(h) {\n  const t = h.toLowerCase();\n  if (t.includes('what happened')) return '🔎 ';\n  if (t.includes('key facts')) return '📌 ';\n  if (t.includes('why')) return '💡 ';\n  if (t.includes('impact')) return '📊 ';\n  if (t.includes('risk')) return '⚠️ ';\n  if (t.includes('takeaway')) return '✅ ';\n  return '';\n}\n\nfunction format(text) {\n  let titleNext = false;\n  const lines = text.split(NL).map((raw) => {\n    let line = raw.trim();\n    if (!line) return '';\n    let heading = false;\n    const h = line.match(/^#+ *(.+)$/);\n    const b = line.match(/^[*][*](.+?)[*][*]:?$/);\n    if (h) {\n      line = h[1];\n      heading = true;\n    } else if (b) {\n      line = b[1];\n      heading = true;\n    } else if (/^[-*•] +/.test(line)) {\n      line = '• ' + line.replace(/^[-*•] +/, '');\n    }\n    line = line.split('*').join('').split('#').join('').split(BT).join('').split('~').join('').trim();\n    if (heading && line.toLowerCase() === 'headline') {\n      titleNext = true;\n      return null;\n    }\n    const safe = esc(line);\n    if (titleNext && !heading) {\n      titleNext = false;\n      return '<b><u>📰 ' + safe + '</u></b>' + NL;\n    }\n    if (heading) return NL + '<b>' + emojiFor(line) + safe + '</b>';\n    return safe;\n  }).filter((l) => l !== null);\n  let out = lines.join(NL);\n  while (out.includes(NL + NL + NL)) out = out.split(NL + NL + NL).join(NL + NL);\n  return out.trim();\n}\n\nconst parts = $input.all()\n  .map((i) => i.json.output)\n  .filter((o) => typeof o === 'string' && o.trim().length > 0)\n  .map(format);\n\nif (parts.length === 0) return [];\n\nconst combined = parts.join(NL + NL + '━━━━━━━━━━━━━━' + NL + NL);\nif (combined.length <= 4096) {\n  return [{ json: { telegram_message: combined } }];\n}\n\nreturn parts.map((p) => ({ json: { telegram_message: p } }));"
+      },
+      "id": "671df954-d401-45f8-955d-66736c07c584",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "6366001081",
+        "text": "={{ $json.telegram_message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "2036e5ed-9af5-4045-9be9-a78de4a402f5",
+      "name": "Send a text message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1296,
+        224
+      ],
+      "webhookId": "432a4079-5d63-48a6-a747-335a8190cad4",
+      "credentials": {
+        "telegramApi": {
+          "id": "nivQQANtO2AkhNxb",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "RSS Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RSS Read": {
+      "main": [
+        [
+          {
+            "node": "Limit to 2 Latest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit to 2 Latest": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2fc9e3fa-51a9-4b2b-965d-a40c966bbb39",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "aab039044302c169cd5783685c164c0d2e561ce5d4f87a2a5f2fe8881df65553"
+  },
+  "nodeGroups": [],
+  "id": "AYwiieATHF4A0UQG",
+  "tags": []
+}
